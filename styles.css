@@ -18,6 +18,7 @@ html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--te
 body { min-height: 100dvh; overscroll-behavior: none; }
 button, input { font: inherit; }
 button { -webkit-tap-highlight-color: transparent; }
+[hidden] { display: none !important; }
 
 .app-shell {
   width: min(1440px, 100%);
@@ -82,11 +83,86 @@ canvas { width: 100%; height: 100%; display: block; touch-action: none; }
 .empty-icon { width: 58px; height: 58px; border: 1px solid var(--line); border-radius: 18px; display: grid; place-items: center; font-size: 26px; background: rgba(255,255,255,.04); }
 .empty-state h2 { font-size: clamp(18px, 3vw, 28px); margin: 18px 0 7px; }
 .empty-state p { color: var(--muted); margin: 0; font-size: 13px; line-height: 1.5; }
-.touch-hint { position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); background: rgba(10,10,12,.75); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,.13); border-radius: 999px; padding: 9px 14px; font-size: 12px; color: #dedee3; pointer-events: none; animation: hintFade 2.8s ease forwards; }
+.touch-hint { position: absolute; left: 50%; bottom: 86px; transform: translateX(-50%); background: rgba(10,10,12,.72); backdrop-filter: blur(14px); border: 1px solid rgba(255,255,255,.10); border-radius: 999px; padding: 8px 13px; font-size: 12px; color: #dedee3; pointer-events: none; animation: hintFade 2.8s ease forwards; }
 @keyframes hintFade { 0%, 55% { opacity: 1; } 100% { opacity: 0; } }
 
-.toast { position: fixed; left: 50%; bottom: max(22px, env(safe-area-inset-bottom)); transform: translate(-50%, 18px); opacity: 0; pointer-events: none; background: #f4f4f5; color: #111113; border-radius: 999px; padding: 10px 15px; font-weight: 750; font-size: 13px; transition: .2s ease; z-index: 20; white-space: nowrap; }
+.floating-dock {
+  position: fixed;
+  left: 50%;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 50;
+  display: flex;
+  gap: 4px;
+  padding: 5px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 999px;
+  background: rgba(18,18,20,.72);
+  backdrop-filter: blur(18px) saturate(1.2);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  box-shadow: 0 10px 36px rgba(0,0,0,.28);
+}
+.dock-button {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(255,255,255,.88);
+  font-size: 18px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.dock-button:hover { background: rgba(255,255,255,.08); }
+.dock-button:active { transform: scale(.94); }
+.dock-button[aria-expanded="true"] { background: #f4f4f5; color: #111113; }
+
+.toast { position: fixed; left: 50%; bottom: max(78px, calc(env(safe-area-inset-bottom) + 72px)); transform: translate(-50%, 18px); opacity: 0; pointer-events: none; background: #f4f4f5; color: #111113; border-radius: 999px; padding: 10px 15px; font-weight: 750; font-size: 13px; transition: .2s ease; z-index: 80; white-space: nowrap; }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* 이미지가 들어오면 편집기가 화면을 차지하고 나머지 UI는 사라진다. */
+body.has-image { overflow: hidden; }
+body.has-image .app-shell { width: 100%; max-width: none; margin: 0; padding: 0; gap: 0; }
+body.has-image .topbar { display: none; }
+body.has-image .workspace { display: block; min-height: 100dvh; }
+body.has-image .stage-card {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  min-height: 100dvh;
+  border: 0;
+  border-radius: 0;
+  background: #0b0b0c;
+}
+body.has-image .stage-toolbar { display: none; }
+body.has-image .canvas-wrap { position: absolute; inset: 0; background: #0b0b0c; }
+body.has-image .controls {
+  display: none;
+  position: fixed;
+  right: 16px;
+  bottom: max(78px, calc(env(safe-area-inset-bottom) + 66px));
+  z-index: 60;
+  width: min(340px, calc(100vw - 32px));
+  max-height: calc(100dvh - 108px);
+  overflow: auto;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 20px;
+  background: rgba(20,20,22,.86);
+  backdrop-filter: blur(20px) saturate(1.15);
+  -webkit-backdrop-filter: blur(20px) saturate(1.15);
+  box-shadow: 0 18px 60px rgba(0,0,0,.34);
+}
+body.has-image.controls-open .controls { display: flex; }
+body.has-image .controls .intro-copy,
+body.has-image .controls .source-actions { display: none; }
+body.has-image .controls .panel-section { border-color: rgba(255,255,255,.08); }
+body.has-image .controls .sliders { padding: 16px; }
+body.has-image .controls .action-grid { padding: 12px; }
+body.has-image .controls #resetButton,
+body.has-image .controls #snapshotButton { display: none; }
+body.has-image .controls #recordButton { grid-column: 1 / -1; }
 
 @media (max-width: 880px) {
   .app-shell { padding: 12px; gap: 12px; }
@@ -100,6 +176,15 @@ canvas { width: 100%; height: 100%; display: block; touch-action: none; }
   .action-grid { grid-template-columns: repeat(3, 1fr); }
   .action-grid .wide { grid-column: auto; }
   .button { min-height: 46px; }
+
+  body.has-image .controls {
+    left: 10px;
+    right: 10px;
+    bottom: max(76px, calc(env(safe-area-inset-bottom) + 66px));
+    width: auto;
+    max-height: min(54dvh, 420px);
+  }
+  body.has-image .controls .sliders { grid-template-columns: 1fr 1fr; }
 }
 
 @media (max-width: 560px) {
@@ -113,6 +198,13 @@ canvas { width: 100%; height: 100%; display: block; touch-action: none; }
   .action-grid { gap: 7px; }
   .action-grid .button { font-size: 12px; padding: 0 8px; }
   .empty-state p { max-width: 250px; }
+
+  .floating-dock { bottom: max(10px, env(safe-area-inset-bottom)); }
+  .dock-button { width: 42px; height: 42px; }
+  body.has-image .controls { bottom: max(68px, calc(env(safe-area-inset-bottom) + 58px)); }
+  body.has-image .controls .sliders { grid-template-columns: 1fr; gap: 14px; }
+  body.has-image .controls .panel-section { padding: 14px; }
+  body.has-image .touch-hint { bottom: 72px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
