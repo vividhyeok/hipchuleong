@@ -1,4 +1,4 @@
-const CACHE = 'hipchuleong-v2';
+const CACHE = 'hipchuleong-v3';
 const ASSETS = ['./', './index.html', './styles.css', './app.js', './ui.js', './manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {
