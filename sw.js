@@ -1,5 +1,5 @@
-const CACHE = 'hipchuleong-v1';
-const ASSETS = ['./', './index.html', './styles.css', './app.js', './manifest.webmanifest'];
+const CACHE = 'hipchuleong-v2';
+const ASSETS = ['./', './index.html', './styles.css', './app.js', './ui.js', './manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)));
