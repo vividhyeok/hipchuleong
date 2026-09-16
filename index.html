@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#111111" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Hipchuleong — 이미지 출렁 물리 장난감</title>
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">HIPCHULEONG</p>
+        <h1>이미지를 넣고, 눌러서 출렁이게.</h1>
+      </div>
+      <button id="openFileTop" class="button ghost compact" type="button">이미지 열기</button>
+    </header>
+
+    <section class="workspace">
+      <aside class="panel controls" aria-label="물리 설정">
+        <div class="panel-section intro-copy">
+          <strong>사용법</strong>
+          <p>이미지를 붙여넣거나 업로드한 다음, 이미지 위를 누르거나 끌어보세요.</p>
+        </div>
+
+        <div class="panel-section source-actions">
+          <button id="openFile" class="button primary" type="button">사진 / 이미지 선택</button>
+          <input id="fileInput" type="file" accept="image/*" hidden />
+          <div class="drop-hint" id="dropHint">PC에서는 이미지 드래그앤드롭·붙여넣기도 됩니다.</div>
+        </div>
+
+        <div class="panel-section sliders">
+          <label class="control-row">
+            <span><b>말랑함</b><output id="softnessValue">62</output></span>
+            <input id="softness" type="range" min="10" max="95" value="62" />
+          </label>
+          <label class="control-row">
+            <span><b>영향 범위</b><output id="radiusValue">24</output></span>
+            <input id="radius" type="range" min="8" max="48" value="24" />
+          </label>
+          <label class="control-row">
+            <span><b>힘</b><output id="strengthValue">58</output></span>
+            <input id="strength" type="range" min="10" max="100" value="58" />
+          </label>
+          <label class="control-row">
+            <span><b>잔진동</b><output id="jiggleValue">54</output></span>
+            <input id="jiggle" type="range" min="0" max="100" value="54" />
+          </label>
+        </div>
+
+        <div class="panel-section action-grid">
+          <button id="resetButton" class="button ghost" type="button">원상 복구</button>
+          <button id="snapshotButton" class="button ghost" type="button">PNG 저장</button>
+          <button id="recordButton" class="button ghost wide" type="button">5초 녹화</button>
+        </div>
+      </aside>
+
+      <section class="stage-card" id="stageCard">
+        <div class="stage-toolbar">
+          <span id="statusText">이미지를 넣어 시작하세요</span>
+          <span class="device-note">마우스 · 터치 · 펜 지원</span>
+        </div>
+
+        <div class="canvas-wrap" id="dropZone">
+          <canvas id="canvas" aria-label="이미지 물리 캔버스"></canvas>
+          <div id="emptyState" class="empty-state">
+            <div class="empty-icon" aria-hidden="true">↘</div>
+            <h2>이미지를 여기로 넣으세요</h2>
+            <p>클릭해서 선택하거나, PC에서 붙여넣기 / 드래그앤드롭</p>
+            <button id="openFileEmpty" class="button primary" type="button">이미지 선택</button>
+          </div>
+          <div id="touchHint" class="touch-hint" hidden>눌러보세요</div>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
