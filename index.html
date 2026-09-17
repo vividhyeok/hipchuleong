@@ -8,6 +8,8 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Hipchuleong — 이미지 출렁 물리 장난감</title>
   <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./icon-192.png" sizes="192x192" />
+  <link rel="apple-touch-icon" href="./icon-192.png" />
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
@@ -34,22 +36,10 @@
         </div>
 
         <div class="panel-section sliders">
-          <label class="control-row">
-            <span><b>말랑함</b><output id="softnessValue">62</output></span>
-            <input id="softness" type="range" min="10" max="95" value="62" />
-          </label>
-          <label class="control-row">
-            <span><b>영향 범위</b><output id="radiusValue">24</output></span>
-            <input id="radius" type="range" min="8" max="48" value="24" />
-          </label>
-          <label class="control-row">
-            <span><b>힘</b><output id="strengthValue">58</output></span>
-            <input id="strength" type="range" min="10" max="100" value="58" />
-          </label>
-          <label class="control-row">
-            <span><b>잔진동</b><output id="jiggleValue">54</output></span>
-            <input id="jiggle" type="range" min="0" max="100" value="54" />
-          </label>
+          <label class="control-row"><span><b>말랑함</b><output id="softnessValue">62</output></span><input id="softness" type="range" min="10" max="95" value="62" /></label>
+          <label class="control-row"><span><b>영향 범위</b><output id="radiusValue">24</output></span><input id="radius" type="range" min="8" max="48" value="24" /></label>
+          <label class="control-row"><span><b>힘</b><output id="strengthValue">58</output></span><input id="strength" type="range" min="10" max="100" value="58" /></label>
+          <label class="control-row"><span><b>잔진동</b><output id="jiggleValue">54</output></span><input id="jiggle" type="range" min="0" max="100" value="54" /></label>
         </div>
 
         <div class="panel-section action-grid">
@@ -64,7 +54,6 @@
           <span id="statusText">이미지를 넣어 시작하세요</span>
           <span class="device-note">마우스 · 터치 · 펜 지원</span>
         </div>
-
         <div class="canvas-wrap" id="dropZone">
           <canvas id="canvas" aria-label="이미지 물리 캔버스"></canvas>
           <div id="emptyState" class="empty-state">

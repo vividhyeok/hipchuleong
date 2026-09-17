@@ -26,10 +26,18 @@ const outputs = {
   jiggle: $('#jiggleValue'),
 };
 
+const MAX_RENDER_EDGE_DESKTOP = 2048;
+const MAX_RENDER_EDGE_MOBILE = 1600;
+const MAX_CANVAS_PIXELS = 4_000_000;
+const MAX_DPR = 1.5;
+const MOTION_EPSILON = 0.045;
+const POSITION_EPSILON = 0.08;
+
 let image = null;
 let imageName = 'hipchuleong';
 let mesh = null;
 let resizeRaf = 0;
+let animationRaf = 0;
 let lastFrame = performance.now();
 let activePointer = null;
 let lastPointer = null;
@@ -41,7 +49,7 @@ let toastTimer = 0;
 const state = {
   cssWidth: 0,
   cssHeight: 0,
-  dpr: Math.min(window.devicePixelRatio || 1, 2),
+  dpr: Math.min(window.devicePixelRatio || 1, MAX_DPR),
   imageRect: { x: 0, y: 0, width: 0, height: 0 },
 };
 
@@ -53,12 +61,15 @@ function showToast(message) {
 }
 
 function updateControlLabels() {
-  for (const [key, input] of Object.entries(controls)) {
-    outputs[key].value = input.value;
-  }
+  for (const [key, input] of Object.entries(controls)) outputs[key].value = input.value;
 }
 
-Object.values(controls).forEach((input) => input.addEventListener('input', updateControlLabels));
+Object.values(controls).forEach((input) => {
+  input.addEventListener('input', () => {
+    updateControlLabels();
+    requestRenderLoop();
+  });
+});
 updateControlLabels();
 
 function openPicker() {
@@ -75,6 +86,79 @@ fileInput.addEventListener('change', async () => {
   fileInput.value = '';
 });
 
+function maxRenderEdge() {
+  return window.matchMedia('(max-width: 880px)').matches ? MAX_RENDER_EDGE_MOBILE : MAX_RENDER_EDGE_DESKTOP;
+}
+
+async function resizeBitmap(bitmap, width, height) {
+  try {
+    return await createImageBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, {
+      resizeWidth: width,
+      resizeHeight: height,
+      resizeQuality: 'high',
+    });
+  } catch {
+    const scratch = document.createElement('canvas');
+    scratch.width = width;
+    scratch.height = height;
+    const scratchCtx = scratch.getContext('2d', { alpha: true });
+    scratchCtx.imageSmoothingEnabled = true;
+    scratchCtx.imageSmoothingQuality = 'high';
+    scratchCtx.drawImage(bitmap, 0, 0, width, height);
+    return createImageBitmap(scratch);
+  }
+}
+
+async function createOptimizedBitmap(file) {
+  const decoded = await createImageBitmap(file);
+  const originalWidth = decoded.width;
+  const originalHeight = decoded.height;
+  const limit = maxRenderEdge();
+  const scale = Math.min(1, limit / Math.max(originalWidth, originalHeight));
+
+  if (scale >= 1) return { bitmap: decoded, originalWidth, originalHeight, optimized: false };
+
+  const width = Math.max(1, Math.round(originalWidth * scale));
+  const height = Math.max(1, Math.round(originalHeight * scale));
+  try {
+    const bitmap = await resizeBitmap(decoded, width, height);
+    return { bitmap, originalWidth, originalHeight, optimized: true };
+  } finally {
+    decoded.close?.();
+  }
+}
+
+async function fallbackImage(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const next = new Image();
+      next.onload = () => resolve(next);
+      next.onerror = reject;
+      next.src = url;
+    });
+    const originalWidth = img.naturalWidth || img.width;
+    const originalHeight = img.naturalHeight || img.height;
+    const limit = maxRenderEdge();
+    const scale = Math.min(1, limit / Math.max(originalWidth, originalHeight));
+
+    if (scale >= 1) return { bitmap: img, originalWidth, originalHeight, optimized: false };
+
+    const width = Math.max(1, Math.round(originalWidth * scale));
+    const height = Math.max(1, Math.round(originalHeight * scale));
+    const scratch = document.createElement('canvas');
+    scratch.width = width;
+    scratch.height = height;
+    const scratchCtx = scratch.getContext('2d', { alpha: true });
+    scratchCtx.imageSmoothingEnabled = true;
+    scratchCtx.imageSmoothingQuality = 'high';
+    scratchCtx.drawImage(img, 0, 0, width, height);
+    return { bitmap: scratch, originalWidth, originalHeight, optimized: true };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 async function loadImageFile(file) {
   if (!file.type.startsWith('image/')) {
     showToast('이미지 파일만 사용할 수 있어요.');
@@ -82,36 +166,36 @@ async function loadImageFile(file) {
   }
 
   try {
-    const bitmap = await createImageBitmap(file);
-    setImage(bitmap, file.name.replace(/\.[^.]+$/, '') || 'hipchuleong');
+    const result = window.createImageBitmap ? await createOptimizedBitmap(file) : await fallbackImage(file);
+    setImage(result.bitmap, file.name.replace(/\.[^.]+$/, '') || 'hipchuleong', result);
   } catch {
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      setImage(img, file.name.replace(/\.[^.]+$/, '') || 'hipchuleong');
-      URL.revokeObjectURL(url);
-    };
-    img.onerror = () => {
-      URL.revokeObjectURL(url);
+    try {
+      const result = await fallbackImage(file);
+      setImage(result.bitmap, file.name.replace(/\.[^.]+$/, '') || 'hipchuleong', result);
+    } catch {
       showToast('이미지를 읽지 못했어요.');
-    };
-    img.src = url;
+    }
   }
 }
 
-function setImage(nextImage, name = 'hipchuleong') {
+function setImage(nextImage, name = 'hipchuleong', meta = null) {
   image?.close?.();
   image = nextImage;
   imageName = name;
   emptyState.hidden = true;
-  statusText.textContent = `${name} · 눌러서 출렁이기`;
+
+  const optimizedText = meta?.optimized ? ` · ${meta.originalWidth}×${meta.originalHeight} → ${image.width}×${image.height}` : '';
+  statusText.textContent = `${name}${optimizedText}`;
+
   fitImage();
   buildMesh();
   touchHint.hidden = false;
   touchHint.style.animation = 'none';
   void touchHint.offsetWidth;
   touchHint.style.animation = '';
-  showToast('이미지를 불러왔어요.');
+  window.dispatchEvent(new CustomEvent('hipchuleong:imagechange', { detail: { loaded: true } }));
+  requestRenderLoop();
+  showToast(meta?.optimized ? '큰 이미지를 화면용으로 최적화했어요.' : '이미지를 불러왔어요.');
 }
 
 function fitImage() {
@@ -122,12 +206,7 @@ function fitImage() {
   const scale = Math.min(maxW / image.width, maxH / image.height);
   const width = image.width * scale;
   const height = image.height * scale;
-  state.imageRect = {
-    x: (state.cssWidth - width) / 2,
-    y: (state.cssHeight - height) / 2,
-    width,
-    height,
-  };
+  state.imageRect = { x: (state.cssWidth - width) / 2, y: (state.cssHeight - height) / 2, width, height };
 }
 
 function buildMesh() {
@@ -137,9 +216,11 @@ function buildMesh() {
   }
 
   const rect = state.imageRect;
-  const targetCell = Math.max(18, Math.min(34, Math.min(rect.width, rect.height) / 18));
-  const cols = Math.max(8, Math.min(34, Math.ceil(rect.width / targetCell)));
-  const rows = Math.max(8, Math.min(34, Math.ceil(rect.height / targetCell)));
+  const targetCell = Math.max(22, Math.min(40, Math.min(rect.width, rect.height) / 16));
+  const maxGrid = state.cssWidth <= 880 ? 20 : 24;
+  const cols = Math.max(8, Math.min(maxGrid, Math.ceil(rect.width / targetCell)));
+  const rows = Math.max(8, Math.min(maxGrid, Math.ceil(rect.height / targetCell)));
+  const stride = cols + 1;
   const vertices = [];
 
   for (let y = 0; y <= rows; y++) {
@@ -148,11 +229,18 @@ function buildMesh() {
       const v = y / rows;
       const px = rect.x + u * rect.width;
       const py = rect.y + v * rect.height;
-      vertices.push({ x: px, y: py, ox: px, oy: py, vx: 0, vy: 0, u, v });
+      vertices.push({ x: px, y: py, ox: px, oy: py, vx: 0, vy: 0, sx: u * image.width, sy: v * image.height });
     }
   }
 
-  mesh = { cols, rows, vertices };
+  mesh = {
+    cols,
+    rows,
+    stride,
+    vertices,
+    dvx: new Float32Array(vertices.length),
+    dvy: new Float32Array(vertices.length),
+  };
 }
 
 function resetMesh(soft = false) {
@@ -170,19 +258,27 @@ function resetMesh(soft = false) {
   }
 }
 
+function canvasDpr(width, height) {
+  const deviceDpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+  const cssPixels = Math.max(1, width * height);
+  const budgetDpr = Math.sqrt(MAX_CANVAS_PIXELS / cssPixels);
+  return Math.max(0.75, Math.min(deviceDpr, budgetDpr));
+}
+
 function resizeCanvas() {
   const rect = dropZone.getBoundingClientRect();
-  const newDpr = Math.min(window.devicePixelRatio || 1, 2);
   state.cssWidth = Math.max(1, rect.width);
   state.cssHeight = Math.max(1, rect.height);
-  state.dpr = newDpr;
-  canvas.width = Math.round(state.cssWidth * newDpr);
-  canvas.height = Math.round(state.cssHeight * newDpr);
+  state.dpr = canvasDpr(state.cssWidth, state.cssHeight);
+  canvas.width = Math.max(1, Math.round(state.cssWidth * state.dpr));
+  canvas.height = Math.max(1, Math.round(state.cssHeight * state.dpr));
   canvas.style.width = `${state.cssWidth}px`;
   canvas.style.height = `${state.cssHeight}px`;
-  ctx.setTransform(newDpr, 0, 0, newDpr, 0, 0);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'medium';
   fitImage();
   buildMesh();
+  requestRenderLoop();
 }
 
 const resizeObserver = new ResizeObserver(() => {
@@ -210,7 +306,6 @@ function applyDrag(point, dx, dy) {
   if (!mesh) return;
   const radius = influenceRadius();
   const strength = Number(controls.strength.value) / 100;
-
   for (const v of mesh.vertices) {
     const dist = Math.hypot(v.x - point.x, v.y - point.y);
     if (dist > radius) continue;
@@ -228,7 +323,6 @@ function applyPulse(point) {
   const radius = influenceRadius();
   const strength = Number(controls.strength.value) / 100;
   const pulse = 4 + strength * 13;
-
   for (const v of mesh.vertices) {
     const dx = v.x - point.x;
     const dy = v.y - point.y;
@@ -236,10 +330,8 @@ function applyPulse(point) {
     if (dist > radius || dist < 0.001) continue;
     const t = 1 - dist / radius;
     const falloff = Math.sin(t * Math.PI) * t;
-    const nx = dx / dist;
-    const ny = dy / dist;
-    v.vx += nx * pulse * falloff;
-    v.vy += ny * pulse * falloff;
+    v.vx += (dx / dist) * pulse * falloff;
+    v.vy += (dy / dist) * pulse * falloff;
   }
 }
 
@@ -251,6 +343,7 @@ canvas.addEventListener('pointerdown', (event) => {
   lastPointer = point;
   movedDuringPointer = false;
   canvas.setPointerCapture?.(event.pointerId);
+  requestRenderLoop();
   event.preventDefault();
 });
 
@@ -262,6 +355,7 @@ canvas.addEventListener('pointermove', (event) => {
   if (Math.abs(dx) + Math.abs(dy) > 0.8) movedDuringPointer = true;
   applyDrag(point, dx, dy);
   lastPointer = point;
+  requestRenderLoop();
   event.preventDefault();
 });
 
@@ -270,6 +364,7 @@ function endPointer(event) {
   if (!movedDuringPointer && lastPointer) applyPulse(lastPointer);
   activePointer = null;
   lastPointer = null;
+  requestRenderLoop();
 }
 canvas.addEventListener('pointerup', endPointer);
 canvas.addEventListener('pointercancel', endPointer);
@@ -280,38 +375,51 @@ canvas.addEventListener('lostpointercapture', () => {
 
 function physicsStep(dt) {
   if (!mesh) return;
-  const { cols, rows, vertices } = mesh;
+  const { cols, rows, stride, vertices, dvx, dvy } = mesh;
   const softness = Number(controls.softness.value) / 100;
   const jiggle = Number(controls.jiggle.value) / 100;
   const spring = 0.045 + (1 - softness) * 0.13;
   const neighborSpring = 0.012 + (1 - softness) * 0.035;
   const damping = 0.72 + jiggle * 0.24;
   const scale = Math.min(2, dt / 16.667);
-  const dvx = new Float32Array(vertices.length);
-  const dvy = new Float32Array(vertices.length);
-
-  const idx = (x, y) => y * (cols + 1) + x;
 
   for (let y = 0; y <= rows; y++) {
     for (let x = 0; x <= cols; x++) {
-      const i = idx(x, y);
+      const i = y * stride + x;
       const v = vertices[i];
       let fx = (v.ox - v.x) * spring;
       let fy = (v.oy - v.y) * spring;
       let count = 0;
       let avgDx = 0;
       let avgDy = 0;
-
-      if (x > 0) { const n = vertices[idx(x - 1, y)]; avgDx += (n.x - n.ox) - (v.x - v.ox); avgDy += (n.y - n.oy) - (v.y - v.oy); count++; }
-      if (x < cols) { const n = vertices[idx(x + 1, y)]; avgDx += (n.x - n.ox) - (v.x - v.ox); avgDy += (n.y - n.oy) - (v.y - v.oy); count++; }
-      if (y > 0) { const n = vertices[idx(x, y - 1)]; avgDx += (n.x - n.ox) - (v.x - v.ox); avgDy += (n.y - n.oy) - (v.y - v.oy); count++; }
-      if (y < rows) { const n = vertices[idx(x, y + 1)]; avgDx += (n.x - n.ox) - (v.x - v.ox); avgDy += (n.y - n.oy) - (v.y - v.oy); count++; }
-
+      if (x > 0) {
+        const n = vertices[i - 1];
+        avgDx += (n.x - n.ox) - (v.x - v.ox);
+        avgDy += (n.y - n.oy) - (v.y - v.oy);
+        count++;
+      }
+      if (x < cols) {
+        const n = vertices[i + 1];
+        avgDx += (n.x - n.ox) - (v.x - v.ox);
+        avgDy += (n.y - n.oy) - (v.y - v.oy);
+        count++;
+      }
+      if (y > 0) {
+        const n = vertices[i - stride];
+        avgDx += (n.x - n.ox) - (v.x - v.ox);
+        avgDy += (n.y - n.oy) - (v.y - v.oy);
+        count++;
+      }
+      if (y < rows) {
+        const n = vertices[i + stride];
+        avgDx += (n.x - n.ox) - (v.x - v.ox);
+        avgDy += (n.y - n.oy) - (v.y - v.oy);
+        count++;
+      }
       if (count) {
         fx += (avgDx / count) * neighborSpring;
         fy += (avgDy / count) * neighborSpring;
       }
-
       dvx[i] = fx * scale;
       dvy[i] = fy * scale;
     }
@@ -326,42 +434,34 @@ function physicsStep(dt) {
   }
 }
 
-function expandTriangle(p0, p1, p2, amount) {
-  const cx = (p0.x + p1.x + p2.x) / 3;
-  const cy = (p0.y + p1.y + p2.y) / 3;
-  return [p0, p1, p2].map((point) => {
-    const dx = point.x - cx;
-    const dy = point.y - cy;
-    const length = Math.hypot(dx, dy) || 1;
-    return {
-      x: point.x + (dx / length) * amount,
-      y: point.y + (dy / length) * amount,
-    };
-  });
-}
-
-function drawTriangle(img, s0, s1, s2, d0, d1, d2) {
-  const denom = s0.x * (s1.y - s2.y) + s1.x * (s2.y - s0.y) + s2.x * (s0.y - s1.y);
+function drawTriangle(img, sx0, sy0, sx1, sy1, sx2, sy2, dx0, dy0, dx1, dy1, dx2, dy2) {
+  const denom = sx0 * (sy1 - sy2) + sx1 * (sy2 - sy0) + sx2 * (sy0 - sy1);
   if (Math.abs(denom) < 1e-6) return;
-
-  const a = (d0.x * (s1.y - s2.y) + d1.x * (s2.y - s0.y) + d2.x * (s0.y - s1.y)) / denom;
-  const c = (d0.x * (s2.x - s1.x) + d1.x * (s0.x - s2.x) + d2.x * (s1.x - s0.x)) / denom;
-  const e = (d0.x * (s1.x * s2.y - s2.x * s1.y) + d1.x * (s2.x * s0.y - s0.x * s2.y) + d2.x * (s0.x * s1.y - s1.x * s0.y)) / denom;
-  const b = (d0.y * (s1.y - s2.y) + d1.y * (s2.y - s0.y) + d2.y * (s0.y - s1.y)) / denom;
-  const d = (d0.y * (s2.x - s1.x) + d1.y * (s0.x - s2.x) + d2.y * (s1.x - s0.x)) / denom;
-  const f = (d0.y * (s1.x * s2.y - s2.x * s1.y) + d1.y * (s2.x * s0.y - s0.x * s2.y) + d2.y * (s0.x * s1.y - s1.x * s0.y)) / denom;
+  const a = (dx0 * (sy1 - sy2) + dx1 * (sy2 - sy0) + dx2 * (sy0 - sy1)) / denom;
+  const c = (dx0 * (sx2 - sx1) + dx1 * (sx0 - sx2) + dx2 * (sx1 - sx0)) / denom;
+  const e = (dx0 * (sx1 * sy2 - sx2 * sy1) + dx1 * (sx2 * sy0 - sx0 * sy2) + dx2 * (sx0 * sy1 - sx1 * sy0)) / denom;
+  const b = (dy0 * (sy1 - sy2) + dy1 * (sy2 - sy0) + dy2 * (sy0 - sy1)) / denom;
+  const d = (dy0 * (sx2 - sx1) + dy1 * (sx0 - sx2) + dy2 * (sx1 - sx0)) / denom;
+  const f = (dy0 * (sx1 * sy2 - sx2 * sy1) + dy1 * (sx2 * sy0 - sx0 * sy2) + dy2 * (sx0 * sy1 - sx1 * sy0)) / denom;
   const overlap = Math.max(0.55, 1.1 / state.dpr);
-  const [c0, c1, c2] = expandTriangle(d0, d1, d2, overlap);
-
+  const cx = (dx0 + dx1 + dx2) / 3;
+  const cy = (dy0 + dy1 + dy2) / 3;
+  const l0 = Math.hypot(dx0 - cx, dy0 - cy) || 1;
+  const l1 = Math.hypot(dx1 - cx, dy1 - cy) || 1;
+  const l2 = Math.hypot(dx2 - cx, dy2 - cy) || 1;
+  const c0x = dx0 + ((dx0 - cx) / l0) * overlap;
+  const c0y = dy0 + ((dy0 - cy) / l0) * overlap;
+  const c1x = dx1 + ((dx1 - cx) / l1) * overlap;
+  const c1y = dy1 + ((dy1 - cy) / l1) * overlap;
+  const c2x = dx2 + ((dx2 - cx) / l2) * overlap;
+  const c2y = dy2 + ((dy2 - cy) / l2) * overlap;
   ctx.save();
   ctx.beginPath();
-  ctx.moveTo(c0.x, c0.y);
-  ctx.lineTo(c1.x, c1.y);
-  ctx.lineTo(c2.x, c2.y);
+  ctx.moveTo(c0x, c0y);
+  ctx.lineTo(c1x, c1y);
+  ctx.lineTo(c2x, c2y);
   ctx.closePath();
   ctx.clip();
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
   ctx.transform(a, b, c, d, e, f);
   ctx.drawImage(img, 0, 0);
   ctx.restore();
@@ -371,51 +471,74 @@ function render() {
   ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
   ctx.fillStyle = '#111113';
   ctx.fillRect(0, 0, state.cssWidth, state.cssHeight);
-
   if (!image || !mesh) return;
-  const { cols, rows, vertices } = mesh;
-  const idx = (x, y) => y * (cols + 1) + x;
-
+  const { cols, rows, stride, vertices } = mesh;
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {
-      const v00 = vertices[idx(x, y)];
-      const v10 = vertices[idx(x + 1, y)];
-      const v01 = vertices[idx(x, y + 1)];
-      const v11 = vertices[idx(x + 1, y + 1)];
-
-      const s00 = { x: v00.u * image.width, y: v00.v * image.height };
-      const s10 = { x: v10.u * image.width, y: v10.v * image.height };
-      const s01 = { x: v01.u * image.width, y: v01.v * image.height };
-      const s11 = { x: v11.u * image.width, y: v11.v * image.height };
-
-      drawTriangle(image, s00, s10, s11, v00, v10, v11);
-      drawTriangle(image, s00, s11, s01, v00, v11, v01);
+      const i = y * stride + x;
+      const v00 = vertices[i];
+      const v10 = vertices[i + 1];
+      const v01 = vertices[i + stride];
+      const v11 = vertices[i + stride + 1];
+      drawTriangle(image, v00.sx, v00.sy, v10.sx, v10.sy, v11.sx, v11.sy, v00.x, v00.y, v10.x, v10.y, v11.x, v11.y);
+      drawTriangle(image, v00.sx, v00.sy, v11.sx, v11.sy, v01.sx, v01.sy, v00.x, v00.y, v11.x, v11.y, v01.x, v01.y);
     }
   }
 }
 
+function hasMotion() {
+  if (!mesh) return false;
+  for (const v of mesh.vertices) {
+    if (Math.abs(v.vx) > MOTION_EPSILON || Math.abs(v.vy) > MOTION_EPSILON || Math.abs(v.x - v.ox) > POSITION_EPSILON || Math.abs(v.y - v.oy) > POSITION_EPSILON) return true;
+  }
+  return false;
+}
+
+function shouldContinueAnimating() {
+  return activePointer !== null || recorder?.state === 'recording' || hasMotion();
+}
+
 function frame(now) {
+  animationRaf = 0;
   const dt = Math.min(32, now - lastFrame || 16.667);
   lastFrame = now;
   physicsStep(dt);
   render();
-  requestAnimationFrame(frame);
+  if (shouldContinueAnimating()) requestRenderLoop();
 }
-requestAnimationFrame(frame);
+
+function requestRenderLoop() {
+  if (animationRaf || document.hidden) return;
+  lastFrame = performance.now();
+  animationRaf = requestAnimationFrame(frame);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    cancelAnimationFrame(animationRaf);
+    animationRaf = 0;
+  } else if (image) requestRenderLoop();
+});
 
 resetButton.addEventListener('click', () => {
   resetMesh(false);
+  requestRenderLoop();
   showToast('원래 모양으로 돌아왔어요.');
 });
 
 snapshotButton.addEventListener('click', () => {
   if (!image) return showToast('먼저 이미지를 넣어주세요.');
   render();
-  const link = document.createElement('a');
-  link.download = `${imageName}-hipchuleong.png`;
-  link.href = canvas.toDataURL('image/png');
-  link.click();
-  showToast('PNG를 저장했어요.');
+  canvas.toBlob((blob) => {
+    if (!blob) return showToast('PNG 저장에 실패했어요.');
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.download = `${imageName}-hipchuleong.png`;
+    link.href = url;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    showToast('PNG를 저장했어요.');
+  }, 'image/png');
 });
 
 function preferredRecorderMime() {
@@ -428,21 +551,19 @@ recordButton.addEventListener('click', () => {
   if (!image) return showToast('먼저 이미지를 넣어주세요.');
   if (!canvas.captureStream || !window.MediaRecorder) return showToast('이 브라우저는 녹화를 지원하지 않아요.');
   if (recorder?.state === 'recording') return;
-
   const mimeType = preferredRecorderMime();
-  const stream = canvas.captureStream(60);
+  const stream = canvas.captureStream(30);
   recordedChunks = [];
-
   try {
     recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
   } catch {
     return showToast('녹화를 시작하지 못했어요.');
   }
-
   recorder.ondataavailable = (event) => {
     if (event.data.size) recordedChunks.push(event.data);
   };
   recorder.onstop = () => {
+    stream.getTracks().forEach((track) => track.stop());
     const blob = new Blob(recordedChunks, { type: recorder.mimeType || 'video/webm' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -454,9 +575,9 @@ recordButton.addEventListener('click', () => {
     recordButton.textContent = '5초 녹화';
     showToast('녹화 파일을 저장했어요.');
   };
-
   recorder.start();
   recordButton.disabled = true;
+  requestRenderLoop();
   let left = 5;
   recordButton.textContent = `${left}초…`;
   const timer = setInterval(() => {

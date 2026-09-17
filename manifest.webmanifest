@@ -3,8 +3,13 @@
   "short_name": "Hipchuleong",
   "description": "이미지를 넣고 터치해서 말랑하게 변형하는 웹 물리 장난감",
   "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#0b0b0c",
   "theme_color": "#111111",
-  "orientation": "any"
+  "orientation": "any",
+  "icons": [
+    { "src": "./icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "./icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
 }

@@ -1,6 +1,5 @@
 const $ = (selector) => document.querySelector(selector);
 
-const emptyState = $('#emptyState');
 const floatingDock = $('#floatingDock');
 const dockOpen = $('#dockOpen');
 const dockReset = $('#dockReset');
@@ -30,35 +29,19 @@ function toggleControls(force) {
   dockControls.setAttribute('aria-expanded', String(next));
 }
 
-function syncFromEmptyState() {
-  setLoadedUI(Boolean(emptyState?.hidden));
-}
-
-syncFromEmptyState();
-
-if (emptyState) {
-  new MutationObserver(syncFromEmptyState).observe(emptyState, {
-    attributes: true,
-    attributeFilter: ['hidden'],
-  });
-}
+setLoadedUI(false);
+window.addEventListener('hipchuleong:imagechange', (event) => {
+  setLoadedUI(Boolean(event.detail?.loaded));
+});
 
 dockOpen?.addEventListener('click', () => {
   toggleControls(false);
   fileInput?.click();
 });
 
-dockReset?.addEventListener('click', () => {
-  resetButton?.click();
-});
-
-dockSave?.addEventListener('click', () => {
-  snapshotButton?.click();
-});
-
-dockControls?.addEventListener('click', () => {
-  toggleControls();
-});
+dockReset?.addEventListener('click', () => resetButton?.click());
+dockSave?.addEventListener('click', () => snapshotButton?.click());
+dockControls?.addEventListener('click', () => toggleControls());
 
 canvas?.addEventListener('pointerdown', () => {
   if (document.body.classList.contains('controls-open')) toggleControls(false);
