@@ -32,10 +32,6 @@ const MAX_CANVAS_PIXELS = 4_000_000;
 const MAX_DPR = 1.5;
 const MOTION_EPSILON = 0.045;
 const POSITION_EPSILON = 0.08;
-const QUALITY_LEVELS = [0.58, 0.72, 0.86, 1];
-const QUALITY_SAMPLE_FRAMES = 45;
-const QUALITY_DOWN_THRESHOLD = 20;
-const QUALITY_UP_THRESHOLD = 9.5;
 
 let image = null;
 let imageName = 'hipchuleong';
@@ -49,24 +45,6 @@ let movedDuringPointer = false;
 let recorder = null;
 let recordedChunks = [];
 let toastTimer = 0;
-let imageLoadGeneration = 0;
-let pendingDrag = null;
-let frameCostTotal = 0;
-let frameCostSamples = 0;
-let qualityCooldown = 0;
-let recordingInterval = 0;
-let recordingStopTimer = 0;
-
-const initialQualityIndex = (() => {
-  const mobile = window.matchMedia('(max-width: 880px)').matches;
-  const memory = navigator.deviceMemory || 0;
-  const cores = navigator.hardwareConcurrency || 0;
-  if ((memory && memory <= 4) || (cores && cores <= 4)) return 1;
-  if (mobile) return 2;
-  return QUALITY_LEVELS.length - 1;
-})();
-
-let qualityIndex = initialQualityIndex;
 
 const state = {
   cssWidth: 0,
@@ -187,30 +165,14 @@ async function loadImageFile(file) {
     return;
   }
 
-  const generation = ++imageLoadGeneration;
-  const name = file.name.replace(/\.[^.]+$/, '') || 'hipchuleong';
-  statusText.textContent = `${name} · 이미지 준비 중…`;
-
-  const acceptResult = (result) => {
-    if (generation !== imageLoadGeneration) {
-      result.bitmap?.close?.();
-      return false;
-    }
-    setImage(result.bitmap, name, result);
-    return true;
-  };
-
   try {
     const result = window.createImageBitmap ? await createOptimizedBitmap(file) : await fallbackImage(file);
-    acceptResult(result);
+    setImage(result.bitmap, file.name.replace(/\.[^.]+$/, '') || 'hipchuleong', result);
   } catch {
-    if (generation !== imageLoadGeneration) return;
     try {
       const result = await fallbackImage(file);
-      acceptResult(result);
+      setImage(result.bitmap, file.name.replace(/\.[^.]+$/, '') || 'hipchuleong', result);
     } catch {
-      if (generation !== imageLoadGeneration) return;
-      statusText.textContent = '이미지를 넣어 시작하세요';
       showToast('이미지를 읽지 못했어요.');
     }
   }
@@ -255,8 +217,7 @@ function buildMesh() {
 
   const rect = state.imageRect;
   const targetCell = Math.max(22, Math.min(40, Math.min(rect.width, rect.height) / 16));
-  const baseGrid = state.cssWidth <= 880 ? 20 : 24;
-  const maxGrid = Math.max(12, Math.round(baseGrid * QUALITY_LEVELS[qualityIndex]));
+  const maxGrid = state.cssWidth <= 880 ? 20 : 24;
   const cols = Math.max(8, Math.min(maxGrid, Math.ceil(rect.width / targetCell)));
   const rows = Math.max(8, Math.min(maxGrid, Math.ceil(rect.height / targetCell)));
   const stride = cols + 1;
@@ -280,64 +241,6 @@ function buildMesh() {
     dvx: new Float32Array(vertices.length),
     dvy: new Float32Array(vertices.length),
   };
-}
-
-function captureMeshState() {
-  if (!mesh || !state.imageRect.width || !state.imageRect.height) return null;
-  const values = new Float32Array(mesh.vertices.length * 4);
-  const width = state.imageRect.width;
-  const height = state.imageRect.height;
-
-  for (let i = 0; i < mesh.vertices.length; i++) {
-    const v = mesh.vertices[i];
-    const offset = i * 4;
-    values[offset] = (v.x - v.ox) / width;
-    values[offset + 1] = (v.y - v.oy) / height;
-    values[offset + 2] = v.vx / width;
-    values[offset + 3] = v.vy / height;
-  }
-
-  return { cols: mesh.cols, rows: mesh.rows, values };
-}
-
-function sampleMeshState(snapshot, u, v, component) {
-  const x = Math.max(0, Math.min(snapshot.cols, u * snapshot.cols));
-  const y = Math.max(0, Math.min(snapshot.rows, v * snapshot.rows));
-  const x0 = Math.floor(x);
-  const y0 = Math.floor(y);
-  const x1 = Math.min(snapshot.cols, x0 + 1);
-  const y1 = Math.min(snapshot.rows, y0 + 1);
-  const tx = x - x0;
-  const ty = y - y0;
-  const stride = snapshot.cols + 1;
-  const read = (px, py) => snapshot.values[(py * stride + px) * 4 + component];
-  const top = read(x0, y0) * (1 - tx) + read(x1, y0) * tx;
-  const bottom = read(x0, y1) * (1 - tx) + read(x1, y1) * tx;
-  return top * (1 - ty) + bottom * ty;
-}
-
-function restoreMeshState(snapshot) {
-  if (!snapshot || !mesh || !state.imageRect.width || !state.imageRect.height) return;
-  const width = state.imageRect.width;
-  const height = state.imageRect.height;
-
-  for (let y = 0; y <= mesh.rows; y++) {
-    for (let x = 0; x <= mesh.cols; x++) {
-      const u = x / mesh.cols;
-      const v = y / mesh.rows;
-      const vertex = mesh.vertices[y * mesh.stride + x];
-      vertex.x += sampleMeshState(snapshot, u, v, 0) * width;
-      vertex.y += sampleMeshState(snapshot, u, v, 1) * height;
-      vertex.vx = sampleMeshState(snapshot, u, v, 2) * width;
-      vertex.vy = sampleMeshState(snapshot, u, v, 3) * height;
-    }
-  }
-}
-
-function rebuildMeshPreservingState() {
-  const snapshot = captureMeshState();
-  buildMesh();
-  restoreMeshState(snapshot);
 }
 
 function resetMesh(soft = false) {
@@ -364,32 +267,17 @@ function canvasDpr(width, height) {
 
 function resizeCanvas() {
   const rect = dropZone.getBoundingClientRect();
-  const nextWidth = Math.max(1, rect.width);
-  const nextHeight = Math.max(1, rect.height);
-  const nextDpr = canvasDpr(nextWidth, nextHeight);
-  const nextPixelWidth = Math.max(1, Math.round(nextWidth * nextDpr));
-  const nextPixelHeight = Math.max(1, Math.round(nextHeight * nextDpr));
-
-  if (
-    Math.abs(nextWidth - state.cssWidth) < 0.5 &&
-    Math.abs(nextHeight - state.cssHeight) < 0.5 &&
-    nextPixelWidth === canvas.width &&
-    nextPixelHeight === canvas.height
-  ) return;
-
-  const meshSnapshot = captureMeshState();
-  state.cssWidth = nextWidth;
-  state.cssHeight = nextHeight;
-  state.dpr = nextDpr;
-  canvas.width = nextPixelWidth;
-  canvas.height = nextPixelHeight;
+  state.cssWidth = Math.max(1, rect.width);
+  state.cssHeight = Math.max(1, rect.height);
+  state.dpr = canvasDpr(state.cssWidth, state.cssHeight);
+  canvas.width = Math.max(1, Math.round(state.cssWidth * state.dpr));
+  canvas.height = Math.max(1, Math.round(state.cssHeight * state.dpr));
   canvas.style.width = `${state.cssWidth}px`;
   canvas.style.height = `${state.cssHeight}px`;
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'medium';
   fitImage();
   buildMesh();
-  restoreMeshState(meshSnapshot);
   requestRenderLoop();
 }
 
@@ -453,7 +341,6 @@ canvas.addEventListener('pointerdown', (event) => {
   if (!insideImage(point)) return;
   activePointer = event.pointerId;
   lastPointer = point;
-  pendingDrag = null;
   movedDuringPointer = false;
   canvas.setPointerCapture?.(event.pointerId);
   requestRenderLoop();
@@ -466,30 +353,14 @@ canvas.addEventListener('pointermove', (event) => {
   const dx = point.x - lastPointer.x;
   const dy = point.y - lastPointer.y;
   if (Math.abs(dx) + Math.abs(dy) > 0.8) movedDuringPointer = true;
-
-  if (pendingDrag) {
-    pendingDrag.point = point;
-    pendingDrag.dx += dx;
-    pendingDrag.dy += dy;
-  } else {
-    pendingDrag = { point, dx, dy };
-  }
-
+  applyDrag(point, dx, dy);
   lastPointer = point;
   requestRenderLoop();
   event.preventDefault();
 });
 
-function flushPendingDrag() {
-  if (!pendingDrag) return;
-  const drag = pendingDrag;
-  pendingDrag = null;
-  applyDrag(drag.point, drag.dx, drag.dy);
-}
-
 function endPointer(event) {
   if (event.pointerId !== activePointer) return;
-  flushPendingDrag();
   if (!movedDuringPointer && lastPointer) applyPulse(lastPointer);
   activePointer = null;
   lastPointer = null;
@@ -498,7 +369,6 @@ function endPointer(event) {
 canvas.addEventListener('pointerup', endPointer);
 canvas.addEventListener('pointercancel', endPointer);
 canvas.addEventListener('lostpointercapture', () => {
-  flushPendingDrag();
   activePointer = null;
   lastPointer = null;
 });
@@ -593,15 +463,7 @@ function drawTriangle(img, sx0, sy0, sx1, sy1, sx2, sy2, dx0, dy0, dx1, dy1, dx2
   ctx.closePath();
   ctx.clip();
   ctx.transform(a, b, c, d, e, f);
-
-  const sourcePad = 2;
-  const sourceX = Math.max(0, Math.floor(Math.min(sx0, sx1, sx2) - sourcePad));
-  const sourceY = Math.max(0, Math.floor(Math.min(sy0, sy1, sy2) - sourcePad));
-  const sourceRight = Math.min(img.width, Math.ceil(Math.max(sx0, sx1, sx2) + sourcePad));
-  const sourceBottom = Math.min(img.height, Math.ceil(Math.max(sy0, sy1, sy2) + sourcePad));
-  const sourceWidth = Math.max(1, sourceRight - sourceX);
-  const sourceHeight = Math.max(1, sourceBottom - sourceY);
-  ctx.drawImage(img, sourceX, sourceY, sourceWidth, sourceHeight, sourceX, sourceY, sourceWidth, sourceHeight);
+  ctx.drawImage(img, 0, 0);
   ctx.restore();
 }
 
@@ -633,57 +495,15 @@ function hasMotion() {
 }
 
 function shouldContinueAnimating() {
-  return pendingDrag !== null || activePointer !== null || recorder?.state === 'recording' || hasMotion();
-}
-
-function monitorFrameCost(frameCost) {
-  frameCostTotal += frameCost;
-  frameCostSamples += 1;
-
-  if (qualityCooldown > 0) {
-    qualityCooldown -= 1;
-    if (frameCostSamples >= QUALITY_SAMPLE_FRAMES) {
-      frameCostTotal = 0;
-      frameCostSamples = 0;
-    }
-    return;
-  }
-
-  if (frameCostSamples < QUALITY_SAMPLE_FRAMES) return;
-  const average = frameCostTotal / frameCostSamples;
-  frameCostTotal = 0;
-  frameCostSamples = 0;
-
-  let nextQuality = qualityIndex;
-  if (average > QUALITY_DOWN_THRESHOLD && qualityIndex > 0) {
-    nextQuality -= 1;
-  } else if (
-    average < QUALITY_UP_THRESHOLD &&
-    qualityIndex < QUALITY_LEVELS.length - 1 &&
-    activePointer === null &&
-    recorder?.state !== 'recording'
-  ) {
-    nextQuality += 1;
-  }
-
-  if (nextQuality !== qualityIndex) {
-    const snapshot = captureMeshState();
-    qualityIndex = nextQuality;
-    buildMesh();
-    restoreMeshState(snapshot);
-    qualityCooldown = 120;
-  }
+  return activePointer !== null || recorder?.state === 'recording' || hasMotion();
 }
 
 function frame(now) {
   animationRaf = 0;
   const dt = Math.min(32, now - lastFrame || 16.667);
   lastFrame = now;
-  const frameStart = performance.now();
-  flushPendingDrag();
   physicsStep(dt);
   render();
-  monitorFrameCost(performance.now() - frameStart);
   if (shouldContinueAnimating()) requestRenderLoop();
 }
 
@@ -723,91 +543,50 @@ snapshotButton.addEventListener('click', () => {
 
 function preferredRecorderMime() {
   if (!window.MediaRecorder) return '';
-  const candidates = [
-    'video/mp4;codecs=avc1.42E01E',
-    'video/mp4',
-    'video/webm;codecs=vp9',
-    'video/webm;codecs=vp8',
-    'video/webm',
-  ];
+  const candidates = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
   return candidates.find((type) => MediaRecorder.isTypeSupported?.(type)) || '';
-}
-
-function resetRecordingUi() {
-  clearInterval(recordingInterval);
-  clearTimeout(recordingStopTimer);
-  recordingInterval = 0;
-  recordingStopTimer = 0;
-  recordButton.disabled = false;
-  recordButton.textContent = '5초 녹화';
 }
 
 recordButton.addEventListener('click', () => {
   if (!image) return showToast('먼저 이미지를 넣어주세요.');
   if (!canvas.captureStream || !window.MediaRecorder) return showToast('이 브라우저는 녹화를 지원하지 않아요.');
   if (recorder?.state === 'recording') return;
-
   const mimeType = preferredRecorderMime();
   const stream = canvas.captureStream(30);
   recordedChunks = [];
-  let failed = false;
-
   try {
     recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
   } catch {
-    stream.getTracks().forEach((track) => track.stop());
     return showToast('녹화를 시작하지 못했어요.');
   }
-
-  const activeRecorder = recorder;
-  activeRecorder.ondataavailable = (event) => {
+  recorder.ondataavailable = (event) => {
     if (event.data.size) recordedChunks.push(event.data);
   };
-  activeRecorder.onerror = () => {
-    failed = true;
+  recorder.onstop = () => {
     stream.getTracks().forEach((track) => track.stop());
-    if (recorder === activeRecorder) recorder = null;
-    resetRecordingUi();
-    showToast('녹화 중 오류가 발생했어요.');
-  };
-  activeRecorder.onstop = () => {
-    stream.getTracks().forEach((track) => track.stop());
-    if (recorder === activeRecorder) recorder = null;
-    resetRecordingUi();
-    if (failed) return;
-
-    const type = activeRecorder.mimeType || mimeType || 'video/webm';
-    const blob = new Blob(recordedChunks, { type });
-    if (!blob.size) return showToast('녹화 파일을 만들지 못했어요.');
-    const extension = type.includes('mp4') ? 'mp4' : 'webm';
+    const blob = new Blob(recordedChunks, { type: recorder.mimeType || 'video/webm' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.download = `${imageName}-hipchuleong.${extension}`;
+    link.download = `${imageName}-hipchuleong.webm`;
     link.href = url;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1500);
+    recordButton.disabled = false;
+    recordButton.textContent = '5초 녹화';
     showToast('녹화 파일을 저장했어요.');
   };
-
-  try {
-    activeRecorder.start(250);
-  } catch {
-    stream.getTracks().forEach((track) => track.stop());
-    recorder = null;
-    resetRecordingUi();
-    return showToast('녹화를 시작하지 못했어요.');
-  }
-
+  recorder.start();
   recordButton.disabled = true;
   requestRenderLoop();
   let left = 5;
   recordButton.textContent = `${left}초…`;
-  recordingInterval = window.setInterval(() => {
+  const timer = setInterval(() => {
     left -= 1;
     recordButton.textContent = `${Math.max(0, left)}초…`;
   }, 1000);
-  recordingStopTimer = window.setTimeout(() => {
-    if (activeRecorder.state === 'recording') activeRecorder.stop();
+  setTimeout(() => {
+    clearInterval(timer);
+    if (recorder?.state === 'recording') recorder.stop();
   }, 5000);
 });
 
