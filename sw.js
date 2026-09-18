@@ -1,4 +1,4 @@
-const CACHE = 'hipchuleong-v4';
+const CACHE = 'hipchuleong-v5';
 const CORE_ASSETS = ['./', './index.html', './styles.css', './app.js', './ui.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (event) => {
